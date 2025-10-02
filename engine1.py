@@ -7,26 +7,23 @@ import numpy as np
 from typing import Iterable, Dict, Tuple, List, Optional
 import os
 
-from timm.utils import AverageMeter # Assuming this is correctly in your environment
-import utils # Assuming utils.py contains create_bbox_weight_map, calc_psnr, calc_ssim
+from timm.utils import AverageMeter
+import utils 
 from torchvision.utils import save_image
-# from torchvision import transforms # Not directly used here, but good practice if transformations are needed
 
-# Attempt to import LPIPS, CV2 and torchmetrics, set flags accordingly
 try:
     import lpips
     LPIPS_AVAILABLE = True
 except ImportError:
     LPIPS_AVAILABLE = False
-    # This print happens at import time. Consider moving to main if you want it once per run.
-    # print("Warning: lpips library not found. Perceptual loss will be skipped. `pip install lpips`")
+
 
 try:
     import cv2
     CV2_AVAILABLE = True
 except ImportError:
     CV2_AVAILABLE = False
-    # print("Warning: OpenCV (cv2) not found. YOLO detection visualizations will not be saved. `pip install opencv-python`")
+
 
 try:
     from torchmetrics.detection import MeanAveragePrecision
@@ -43,9 +40,9 @@ def evaluate_semcom_with_yolo(
     yolo_model: Optional[torch.nn.Module],
     dataloader: torch.utils.data.DataLoader,
     device: torch.device,
-    reconstruction_criterion: torch.nn.Module, # Base L1 reduction='none' for weighted loss calc
-    fim_criterion: Optional[torch.nn.Module], # For optional FIM loss logging
-    lpips_criterion: Optional[nn.Module], # For optional LPIPS logging
+    reconstruction_criterion: torch.nn.Module,
+    fim_criterion: Optional[torch.nn.Module], 
+    lpips_criterion: Optional[nn.Module], 
     args,
     current_epoch_num: any,
     viz_output_dir: Optional[str] = None,
@@ -56,19 +53,18 @@ def evaluate_semcom_with_yolo(
     semcom_net.eval()
     if yolo_model: yolo_model.eval()
 
-    # Meters
     main_rec_loss_meter_eval = AverageMeter()
     vq_loss_meter_eval = AverageMeter()
     fim_loss_meter_eval = AverageMeter()
-    lpips_loss_meter_eval = AverageMeter() # For LPIPS
+    lpips_loss_meter_eval = AverageMeter() 
     psnr_meter = AverageMeter()
     ssim_meter = AverageMeter()
 
     map_calculator = None
     if yolo_model and TORCHMETRICS_AVAILABLE:
         try:
-            # Remove respect_labels=True
-            map_calculator = MeanAveragePrecision(iou_type="bbox", class_metrics=True) # <--- MODIFIED HERE
+          
+            map_calculator = MeanAveragePrecision(iou_type="bbox", class_metrics=True) 
         except Exception as e_map:
             print(f"Error initializing MeanAveragePrecision: {e_map}. mAP calculation will be skipped.")
             map_calculator = None
@@ -124,28 +120,25 @@ def evaluate_semcom_with_yolo(
         current_eval_fim_loss = 0.0
         if fim_criterion and 'fim_importance_scores' in outputs_dict:
             fim_preds_eval_logits = outputs_dict['fim_importance_scores']
-            # Ensure target map matches the number of patches FIM made predictions for
-            # This logic depends on whether bm_pos (encoder_mask) was applied before FIM input
-            if args.mask_ratio == 0.0: # FIM saw all patches
+    
+            if args.mask_ratio == 0.0: 
                 target_fim_map = fim_target_map_batch_eval
-            else: # FIM saw only visible patches
+            else: 
                 if bm_pos is not None:
                     flat_fim_targets = fim_target_map_batch_eval.reshape(-1, 1)
                     flat_bm_pos_encoder_mask = bm_pos.reshape(-1)
                     target_fim_map = flat_fim_targets[~flat_bm_pos_encoder_mask].reshape(batch_size_eval, -1, 1)
-                else: # Should not happen if mask_ratio > 0 and bm_pos is None
+                else: 
                     target_fim_map = fim_target_map_batch_eval 
 
             if fim_preds_eval_logits.shape == target_fim_map.shape:
-                 with torch.amp.autocast(device_type=args.device, enabled=False): # Calculate FIM loss in FP32 for stability
+                 with torch.amp.autocast(device_type=args.device, enabled=False):
                     fim_loss_eval = fim_criterion(fim_preds_eval_logits.float(), target_fim_map.to(fim_preds_eval_logits.dtype).float())
                     current_eval_fim_loss = fim_loss_eval.item()
-            # else:
-            #     print(f"Eval FIM Shape Mismatch: Pred {fim_preds_eval_logits.shape}, Target {target_fim_map.shape}")
+
 
         fim_loss_meter_eval.update(current_eval_fim_loss, batch_size_eval)
 
-        # LPIPS Loss (optional for eval logging)
         current_eval_lpips_loss = 0.0
         if lpips_criterion and hasattr(args, 'lpips_loss_weight') and args.lpips_loss_weight > 0:
             with torch.amp.autocast(device_type=args.device, enabled=False): # LPIPS often prefers FP32
@@ -162,7 +155,7 @@ def evaluate_semcom_with_yolo(
         ssim_meter.update(np.mean(batch_ssim) if batch_ssim else 0.0, batch_size_eval)
 
         if batch_idx < visualize_batches and viz_output_dir:
-            # ... (visualization code as before) ...
+
             for i in range(min(batch_size_eval, visualize_images_per_batch)):
                 save_image(reconstructed_image_batch[i].cpu(), os.path.join(viz_output_dir, f"ep{current_epoch_num}_b{batch_idx}_i{i}_snr{args.snr_db_eval:.0f}dB_RECON.png"))
                 save_image(original_imgs_tensor[i].cpu(), os.path.join(viz_output_dir, f"ep{current_epoch_num}_b{batch_idx}_i{i}_ORIG.png"))
@@ -177,7 +170,7 @@ def evaluate_semcom_with_yolo(
                             fim_map_resized_viz = cv2.resize((fim_map_2d_viz * 255).astype(np.uint8), (args.input_size, args.input_size), interpolation=cv2.INTER_NEAREST)
                             cv2.imwrite(os.path.join(viz_output_dir, f"ep{current_epoch_num}_b{batch_idx}_i{i}_FIM_PRED_MAP.png"), fim_map_resized_viz)
                         
-                        # Visualize FIM Target Map
+             
                         target_fim_map_viz_item = fim_target_map_batch_eval[i].squeeze().cpu().numpy()
                         if target_fim_map_viz_item.size == num_h_patches * num_w_patches:
                             target_fim_map_2d_viz = target_fim_map_viz_item.reshape(num_h_patches, num_w_patches)
@@ -188,7 +181,7 @@ def evaluate_semcom_with_yolo(
 
         if yolo_model and map_calculator:
             if batch_idx < visualize_batches and viz_output_dir and CV2_AVAILABLE:
-                # ... (YOLO on Original visualization code as before) ...
+          
                 try:
                     yolo_input_orig_eval = original_imgs_tensor.detach()
                     yolo_results_orig_eval = yolo_model(yolo_input_orig_eval, verbose=False, conf=args.yolo_conf_thres, iou=args.yolo_iou_thres)
@@ -199,9 +192,8 @@ def evaluate_semcom_with_yolo(
             
             yolo_preds_for_metric = []
             try:
-                yolo_input_recon_eval = reconstructed_image_batch.detach() # Already [0,1] range
-                # Verify YOLO input normalization expectations (if best.pt was trained with specific norm)
-                # If needed: yolo_input_recon_eval = normalize_for_yolo(yolo_input_recon_eval)
+                yolo_input_recon_eval = reconstructed_image_batch.detach() 
+      
                 yolo_results_list_recon_eval = yolo_model(yolo_input_recon_eval, verbose=False, conf=args.yolo_conf_thres, iou=args.yolo_iou_thres)
                 for i_vr, result_r_eval in enumerate(yolo_results_list_recon_eval):
                     if result_r_eval.boxes is not None and len(result_r_eval.boxes.xyxy) > 0:
@@ -237,7 +229,6 @@ def evaluate_semcom_with_yolo(
         'psnr': psnr_meter.avg, 'ssim': ssim_meter.avg,
     }
     if map_calculator:
-        # ... (final mAP calculation and logging as before) ...
         try:
             final_map_results = map_calculator.compute()
             print(f"\nFinal mAP Results (Eval SNR: {args.snr_db_eval:.1f} dB, Epoch/Run: {current_epoch_num}):")
@@ -263,9 +254,9 @@ def train_semcom_reconstruction_batch(
     bm_pos: Optional[torch.Tensor],
     base_reconstruction_criterion: torch.nn.Module,
     fim_criterion: torch.nn.Module,
-    lpips_criterion: Optional[nn.Module], # Added LPIPS criterion
+    lpips_criterion: Optional[nn.Module], 
     args
-) -> Tuple[torch.Tensor, torch.Tensor, float, float, float, float]: # Added LPIPS loss value
+) -> Tuple[torch.Tensor, torch.Tensor, float, float, float, float]: 
     outputs_dict = model(
         img=input_samples_for_semcom, bm_pos=bm_pos, _eval=False,
         train_snr_db_min=args.snr_db_train_min, train_snr_db_max=args.snr_db_train_max
@@ -276,7 +267,7 @@ def train_semcom_reconstruction_batch(
     batch_size = reconstructed_image_batch.size(0)
     current_device = reconstructed_image_batch.device
     
-    # 1. Bounding Box Weighted Reconstruction Loss
+
     total_weighted_rec_loss_tensor = torch.tensor(0.0, device=current_device)
     for i in range(batch_size):
         reconstructed_img_single = reconstructed_image_batch[i]
@@ -292,17 +283,17 @@ def train_semcom_reconstruction_batch(
     final_reconstruction_loss = total_weighted_rec_loss_tensor / batch_size if batch_size > 0 else torch.tensor(0.0, device=current_device)
     current_rec_loss_val = final_reconstruction_loss.item()
 
-    # 2. FIM-Weighted VQ Loss
+ 
     vq_loss_component = torch.tensor(0.0, device=current_device)
     current_vq_loss_val = 0.0
     if 'vq_loss' in outputs_dict and outputs_dict['vq_loss'] is not None:
-        vq_loss_tensor = outputs_dict['vq_loss'] # This is self.current_vq_loss from the model
+        vq_loss_tensor = outputs_dict['vq_loss'] 
         if isinstance(vq_loss_tensor, torch.Tensor):
-            # This vq_loss_tensor is already the mean FIM-weighted loss from both quantizers
+         
             vq_loss_component = args.vq_loss_weight * vq_loss_tensor
-            current_vq_loss_val = vq_loss_tensor.item() # Log this value
+            current_vq_loss_val = vq_loss_tensor.item() 
 
-    # 3. FIM Training Loss
+ 
     fim_loss_component = torch.tensor(0.0, device=current_device)
     current_fim_loss_val = 0.0
     if fim_predicted_logits_batch is not None:
@@ -316,19 +307,15 @@ def train_semcom_reconstruction_batch(
             fim_loss = fim_criterion(fim_predicted_logits_batch, target_fim_map_for_loss.to(fim_predicted_logits_batch.dtype))
             fim_loss_component = args.fim_loss_weight * fim_loss
             current_fim_loss_val = fim_loss.item()
-        # else:
-            # print(f"Train FIM Shape Mismatch: Pred {fim_predicted_logits_batch.shape}, Target {target_fim_map_for_loss.shape}")
-
-
-    # 4. LPIPS Perceptual Loss
+     
     perceptual_loss_component = torch.tensor(0.0, device=current_device)
     current_lpips_loss_val = 0.0
     if lpips_criterion is not None and args.lpips_loss_weight > 0:
-        # LPIPS expects images in range [-1, 1]
+       
         recon_for_lpips = (reconstructed_image_batch * 2.0) - 1.0
         orig_for_lpips = (original_images_for_loss * 2.0) - 1.0
-        # Disable autocast for LPIPS if it's sensitive, or ensure it works with current precision
-        with torch.amp.autocast(device_type=args.device, enabled=False): # Often LPIPS is better in FP32
+
+        with torch.amp.autocast(device_type=args.device, enabled=False): 
              lpips_val = lpips_criterion(recon_for_lpips.float(), orig_for_lpips.float()).mean()
         perceptual_loss_component = args.lpips_loss_weight * lpips_val
         current_lpips_loss_val = lpips_val.item()
@@ -342,7 +329,7 @@ def train_epoch_semcom_reconstruction(
     model: torch.nn.Module,
     base_reconstruction_criterion: torch.nn.Module,
     fim_criterion: torch.nn.Module,
-    lpips_criterion: Optional[nn.Module], # Added LPIPS
+    lpips_criterion: Optional[nn.Module],
     data_loader: torch.utils.data.DataLoader,
     optimizer: torch.optim.Optimizer,
     device: torch.device,
@@ -361,7 +348,7 @@ def train_epoch_semcom_reconstruction(
     main_rec_loss_meter = AverageMeter()
     vq_loss_meter_train = AverageMeter()
     fim_loss_meter_train = AverageMeter()
-    lpips_loss_meter_train = AverageMeter() # LPIPS meter
+    lpips_loss_meter_train = AverageMeter()
     total_loss_meter = AverageMeter()
 
     psnr_meter = AverageMeter()
