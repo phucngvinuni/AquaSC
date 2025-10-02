@@ -1,4 +1,4 @@
-name: siso-project-env  # Đặt một cái tên rõ ràng cho môi trường mới
+name: siso-project-env 
 channels:
   - pytorch
   - nvidia
@@ -6,27 +6,27 @@ channels:
   - defaults
 
 dependencies:
-  # --- Các gói chính cài bằng Conda ---
+
   - python=3.10
   - pip
   
-  # Tổ hợp PyTorch ổn định và tương thích với RTX 40-series
+
   - pytorch::pytorch=2.1.2
   - pytorch::torchvision
   - pytorch::torchaudio
   - pytorch-cuda=12.1
   
-  - numpy<1.26   # Ràng buộc quan trọng để tương thích
+  - numpy<1.26  
   - cython
   - tqdm
   - matplotlib
   
-  # --- Các gói phụ cài bằng Pip ---
+
   - pip:
     - ultralytics
-    - timm==0.9.12  # Chỉ định một phiên bản timm ổn định
+    - timm==0.9.12  
     - torchmetrics[detection]
-    - opencv-python # Phiên bản đầy đủ, không phải headless
+    - opencv-python 
     - lpips
     - einops
     - pytorch-msssim
