@@ -34,7 +34,7 @@ conda activate aquasc-env
 ```
 
 ### 1.3. Prepare the Dataset
-1.  Download the **VinFish** dataset from [this link](https://#) <!-- Add dataset download link --> and unzip it.
+1.  Download the **VinFish** dataset from [this link](https://drive.google.com/file/d/1S4wye_MOeDrs8uBzcMSN15ChbvCbH77Z/view?usp=sharing) <!-- Add dataset download link --> and unzip it.
 2.  Arrange the dataset into the following structure:
     ```
     /path/to/your/dataset/
