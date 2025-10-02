@@ -8,14 +8,8 @@ import glob
 from torchvision import transforms
 from torchvision.transforms import InterpolationMode
 from typing import Tuple, Any, List, Dict
-
-# --- THÊM CÁC IMPORT CẦN THIẾT ---
 import cv2
 from torchvision.transforms.functional import to_pil_image
-# --- KẾT THÚC THÊM IMPORT ---
-
-# Class RandomMaskingGenerator và SemComInputProcessor không thay đổi.
-# Chúng được giữ nguyên như trong file gốc của bạn.
 
 class RandomMaskingGenerator:
     """
@@ -151,38 +145,19 @@ class YOLODataset(data.Dataset):
         label_path = self.label_files[index]
 
         try:
-            # ==========================================================
-            # === THAY ĐỔI: SỬ DỤNG OPENCV ĐỂ ĐỌC ẢNH ===
-            # ==========================================================
-            # Đọc ảnh bằng OpenCV, nó trả về một mảng NumPy theo định dạng BGR.
             img_bgr = cv2.imread(img_path)
-            
-            # Kiểm tra xem ảnh có được đọc thành công không
             if img_bgr is None:
                 raise IOError(f"cv2.imread returned None for path: {img_path}")
-                
-            # Chuyển từ BGR sang RGB, vì các transform và model thường mong đợi RGB
             img_rgb_np = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-            
-            # Chuyển mảng NumPy thành ảnh PIL để tương thích với các transform hiện có
-            # self.semcom_processor của bạn mong đợi một đối tượng PIL
             img_pil = to_pil_image(img_rgb_np)
-            # ==========================================================
-            # === KẾT THÚC THAY ĐỔI ===
-            # ==========================================================
             
         except Exception as e:
             print(f"CRITICAL Error loading image {img_path}: {e}. Skipping and returning next.")
-            # Việc gọi đệ quy __getitem__ có thể gây tràn stack nếu nhiều ảnh lỗi liên tiếp.
-            # Cách này chấp nhận được cho việc debug, nhưng trong sản phẩm thực tế
-            # nên có cơ chế lọc các file lỗi trước khi train.
             next_index = (index + 1) % len(self)
             return self.__getitem__(next_index)
 
-        # Phần còn lại của hàm giữ nguyên vì self.semcom_processor vẫn nhận được ảnh PIL
         img_tensor_for_semcom, semcom_encoder_patch_mask = self.semcom_processor(img_pil)
 
-        # Tải label từ file .txt
         boxes_normalized_xyxy = []
         class_labels = []
         if os.path.exists(label_path):
@@ -211,18 +186,13 @@ class YOLODataset(data.Dataset):
             abs_pixel_boxes_tensor[:, [1, 3]] *= self.img_pixel_size
         
         yolo_gt_for_metrics_dict = {"boxes": abs_pixel_boxes_tensor, "labels": labels_tensor}
-
-        # Tạo bản đồ quan trọng cho FIM
         fim_target_importance_map = self._create_patch_importance_map(abs_pixel_boxes_tensor)
-
-        # Đóng gói dữ liệu trả về
         semcom_input_tuple = (img_tensor_for_semcom, semcom_encoder_patch_mask)
         targets_tuple = (img_tensor_for_semcom.clone(), yolo_gt_for_metrics_dict, fim_target_importance_map)
 
         return semcom_input_tuple, targets_tuple
 
 
-# Hàm build_dataset và yolo_collate_fn không thay đổi.
 def build_dataset(is_train: bool, args: Any) -> data.Dataset:
     if args.data_set == 'fish':
         if is_train:
