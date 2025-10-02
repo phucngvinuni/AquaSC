@@ -12,8 +12,7 @@ from model_util import (
     ViTEncoder_Van, ViTDecoder_ImageReconstruction,
     HierarchicalQuantizer, Channels, FeatureImportanceTransformer, _cfg
 )
-# --- BƯỚC 1: IMPORT MODULE KÊNH KỸ THUẬT SỐ ---
-# Giả định bạn đã tạo file digital_channel.py
+
 from digital_channel import transmit_and_receive_indices_batch
 
 class ViT_Reconstruction_Model(nn.Module):
@@ -80,8 +79,7 @@ class ViT_Reconstruction_Model(nn.Module):
             embedding_dim=quantizer_dim,
             commitment_cost=quantizer_commitment_cost
         )
-        
-        # Channel simulator này giờ chỉ được dùng cho "analog proxy" trong lúc training
+
         self.channel_simulator = Channels() 
         self.channel_to_decoder_proj = nn.Linear(quantizer_dim, decoder_embed_dim)
 
@@ -137,20 +135,18 @@ class ViT_Reconstruction_Model(nn.Module):
         # 3. Project features
         x_proj_normalized = self.norm_before_quantizer(self.encoder_to_channel_proj(x_encoded_tokens))
 
-        # --- BƯỚC 4: LƯỢNG TỬ HÓA VÀ TRUYỀN TIN (Logic có phân nhánh) ---
+        
         if is_training:
-            # --- TRAINING PATH (ANALOG PROXY) ---
             final_tokens_for_channel = torch.zeros_like(x_proj_normalized)
             total_vq_loss = torch.tensor(0.0, device=img.device)
             
-            # Xử lý các token quan trọng (High-Fidelity)
+        
             high_tokens_mask_flat = route_to_high_mask.flatten()
             if high_tokens_mask_flat.any():
                 q_high, vq_loss_high, _, _ = self.quantizer_high(x_proj_normalized.view(-1, x_proj_normalized.size(-1))[high_tokens_mask_flat])
                 final_tokens_for_channel[route_to_high_mask] = q_high
                 total_vq_loss += (vq_loss_high * fim_scores.squeeze(-1)[route_to_high_mask]).mean()
 
-            # Xử lý các token không quan trọng (Low-Fidelity)
             low_tokens_mask = ~route_to_high_mask
             low_tokens_mask_flat = low_tokens_mask.flatten()
             if low_tokens_mask_flat.any():
@@ -160,28 +156,23 @@ class ViT_Reconstruction_Model(nn.Module):
             
             self.current_vq_loss = total_vq_loss / 2.0
             
-            # Truyền VECTORS qua kênh ANALOG mô phỏng
             noise_power_variance = 10**(-current_snr_db / 10.0)
             tokens_after_channel = self.channel_simulator.Rayleigh(final_tokens_for_channel, noise_power_variance)
             x_for_decoder_input = self.channel_to_decoder_proj(tokens_after_channel)
 
-        else: # is_training is False --> EVALUATION PATH (DIGITAL PIPELINE)
+        else: 
             if B > 1:
-                # Giữ lại cảnh báo này vì pipeline digital thường xử lý batch=1
+
                 print("Warning: Digital evaluation path might be slow with batch size > 1. Forcing batch size to 1 is recommended for evaluation.")
 
-                        # Tạo tensor để chứa các chỉ số và số bit cho từng token
+                
             all_indices = torch.zeros_like(route_to_high_mask, dtype=torch.long)
             bits_per_index = torch.zeros_like(route_to_high_mask, dtype=torch.long)
-            
-            # Khởi tạo loss và output STE
             total_vq_loss = torch.tensor(0.0, device=img.device)
             quantized_ste_output = torch.zeros_like(x_proj_normalized)
 
             bits_high = int(np.log2(self.quantizer_high.num_embeddings))
             bits_low = int(np.log2(self.quantizer_low.num_embeddings))
-
-            # Xử lý các token quan trọng (High-Fidelity)
             if route_to_high_mask.any():
                 high_tokens = x_proj_normalized[route_to_high_mask]
                 q_high_ste, vq_loss_high, _, indices_high = self.quantizer_high(high_tokens)
@@ -189,10 +180,9 @@ class ViT_Reconstruction_Model(nn.Module):
                 quantized_ste_output[route_to_high_mask] = q_high_ste
                 all_indices[route_to_high_mask] = indices_high
                 bits_per_index[route_to_high_mask] = bits_high
-                # Weight VQ loss bằng FIM scores
+   
                 total_vq_loss += (vq_loss_high * fim_scores.squeeze(-1)[route_to_high_mask]).mean()
 
-            # Xử lý các token không quan trọng (Low-Fidelity)
             low_tokens_mask = ~route_to_high_mask
             if low_tokens_mask.any():
                 low_tokens = x_proj_normalized[low_tokens_mask]
@@ -201,37 +191,19 @@ class ViT_Reconstruction_Model(nn.Module):
                 quantized_ste_output[low_tokens_mask] = q_low_ste
                 all_indices[low_tokens_mask] = indices_low
                 bits_per_index[low_tokens_mask] = bits_low
-                # Weight VQ loss
+
                 total_vq_loss += (vq_loss_low * (1 - fim_scores.squeeze(-1)[low_tokens_mask])).mean()
 
-            self.current_vq_loss = total_vq_loss / 2.0 # Trung bình loss từ 2 quantizer
-
-            # 4.5. **TRUYỀN QUA KÊNH DIGITAL**
-            # Chú ý: Cần đảm bảo `transmit_digital_indices` có thể xử lý batch > 1
-            # Nếu không, cần thêm `if B > 1: raise NotImplementedError...`
+            self.current_vq_loss = total_vq_loss / 2.0 
             recovered_indices = transmit_digital_indices(all_indices, bits_per_index, snr_db=current_snr_db)
-
-            # 5. Khôi phục vector từ các chỉ số đã nhận được (bên thu)
             tokens_after_channel = torch.zeros_like(x_proj_normalized)
-            for i in range(B): # Lặp qua từng ảnh trong batch để tra cứu sổ mã
+            for i in range(B): 
                 rec_idx_i = recovered_indices[i]
                 route_high_i = route_to_high_mask[i]
-                
-                # Lấy các vector từ sổ mã high
                 tokens_after_channel[i, route_high_i] = self.quantizer_high.embedding(rec_idx_i[route_high_i])
-                
-                # Lấy các vector từ sổ mã low
                 tokens_after_channel[i, ~route_high_i] = self.quantizer_low.embedding(rec_idx_i[~route_high_i])
-                
-            # 6. Decoder
-            # *** Quan trọng: Để STE hoạt động, gradient phải chảy qua quantized_ste_output ***
-            # Chúng ta sẽ dùng một "mánh" nhỏ:
-            # Luồng xuôi dùng `tokens_after_channel` (kết quả thực tế sau kênh)
-            # Luồng ngược sẽ dùng `quantized_ste_output` (để gradient có thể đi qua)
             x_for_decoder_input_fw = self.channel_to_decoder_proj(tokens_after_channel)
             x_for_decoder_input_bw = self.channel_to_decoder_proj(quantized_ste_output)
-            
-            # Áp dụng STE cho toàn bộ khối kênh + VQ
             x_for_decoder_input = x_for_decoder_input_fw + (x_for_decoder_input_bw - x_for_decoder_input_fw).detach()
         
         reconstructed_image = self.img_decoder(
